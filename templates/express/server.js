@@ -2,7 +2,6 @@ import * as fs from "node:fs";
 
 import { createRequestHandler } from "@remix-run/express";
 import { broadcastDevReady, installGlobals } from "@remix-run/node";
-import chokidar from "chokidar";
 import compression from "compression";
 import express from "express";
 import morgan from "morgan";
@@ -36,15 +35,31 @@ app.use(express.static("public", { maxAge: "1h" }));
 
 app.use(morgan("tiny"));
 
-app.all(
-  "*",
-  process.env.NODE_ENV === "development"
-    ? createDevRequestHandler()
-    : createRequestHandler({
-        build,
+if (process.env.NODE_ENV === "development") {
+  app.all("*", async (req, res, next) => {
+    const chokidar = await import("chokidar");
+    const watcher = chokidar.watch(BUILD_PATH, { ignoreInitial: true });
+
+    watcher.on("all", async () => {
+      // 1. purge require cache && load updated server build
+      const stat = fs.statSync(BUILD_PATH);
+      build = import(BUILD_PATH + "?t=" + stat.mtimeMs);
+      // 2. tell dev server that this app server is now ready
+      broadcastDevReady(await build);
+    });
+
+    try {
+      return createRequestHandler({
+        build: await build,
         mode: process.env.NODE_ENV,
-      })
-);
+      })(req, res, next);
+    } catch (error) {
+      next(error);
+    }
+  });
+} else {
+  app.all("*", createRequestHandler({ build, mode: process.env.NODE_ENV }));
+}
 
 const port = process.env.PORT || 3000;
 app.listen(port, async () => {
@@ -54,27 +69,3 @@ app.listen(port, async () => {
     broadcastDevReady(build);
   }
 });
-
-function createDevRequestHandler() {
-  const watcher = chokidar.watch(BUILD_PATH, { ignoreInitial: true });
-
-  watcher.on("all", async () => {
-    // 1. purge require cache && load updated server build
-    const stat = fs.statSync(BUILD_PATH);
-    build = import(BUILD_PATH + "?t=" + stat.mtimeMs);
-    // 2. tell dev server that this app server is now ready
-    broadcastDevReady(await build);
-  });
-
-  return async (req, res, next) => {
-    try {
-      //
-      return createRequestHandler({
-        build: await build,
-        mode: "development",
-      })(req, res, next);
-    } catch (error) {
-      next(error);
-    }
-  };
-}
