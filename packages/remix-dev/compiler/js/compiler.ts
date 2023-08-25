@@ -27,6 +27,7 @@ type Compiler = {
   // produce ./public/build/
   compile: () => Promise<{
     metafile: esbuild.Metafile;
+    outputFiles: esbuild.OutputFile[];
     hmr?: Manifest["hmr"];
   }>;
   cancel: () => Promise<void>;
@@ -95,14 +96,13 @@ const createEsbuildConfig = (
       includeNodeModules: true,
     }),
     nodeModulesPolyfillPlugin({
-      // For the browser build, we replace any Node built-ins that don't have a
-      // polyfill with an empty module. This ensures the build can pass without
-      // having to mark all Node built-ins as external which can result in other
-      // issues, e.g. https://github.com/remix-run/remix/issues/5521. We then
-      // rely on tree-shaking to remove all unused polyfills and fallbacks.
-      fallback: "empty",
+      // Mark any unpolyfilled Node builtins in the build output as errors.
+      fallback: "error",
+      // Only pass through the "modules" and "globals" options to ensure we
+      // don't leak the full plugin API to Remix consumers.
+      modules: ctx.config.browserNodeBuiltinsPolyfill?.modules ?? {},
+      globals: ctx.config.browserNodeBuiltinsPolyfill?.globals ?? {},
     }),
-    externalPlugin(/^node:.*/, { sideEffects: false }),
   ];
 
   if (ctx.options.mode === "development") {
@@ -156,11 +156,12 @@ export const create = async (
 ): Promise<Compiler> => {
   let compiler = await esbuild.context({
     ...createEsbuildConfig(ctx, refs),
+    write: false,
     metafile: true,
   });
 
   let compile = async () => {
-    let { metafile } = await compiler.rebuild();
+    let { metafile, outputFiles } = await compiler.rebuild();
     writeMetafile(ctx, "metafile.js.json", metafile);
 
     let hmr: Manifest["hmr"] | undefined = undefined;
@@ -181,7 +182,7 @@ export const create = async (
       };
     }
 
-    return { metafile, hmr };
+    return { metafile, hmr, outputFiles };
   };
 
   return {

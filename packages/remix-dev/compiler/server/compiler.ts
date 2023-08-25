@@ -68,8 +68,10 @@ const createEsbuildConfig = (
   if (ctx.config.serverNodeBuiltinsPolyfill) {
     plugins.unshift(
       nodeModulesPolyfillPlugin({
-        // Ensure only "modules" option is passed to the plugin
-        modules: ctx.config.serverNodeBuiltinsPolyfill.modules,
+        // Only pass through the "modules" and "globals" options to ensure we
+        // don't leak the full plugin API to Remix consumers.
+        modules: ctx.config.serverNodeBuiltinsPolyfill.modules ?? {},
+        globals: ctx.config.serverNodeBuiltinsPolyfill.globals ?? {},
       })
     );
   }
